@@ -8,5 +8,7 @@ xgboost>=1.7.0
 lightgbm>=3.3.0
 shap>=0.41.0
 joblib>=1.2.0
+torch>=2.1.0
 fastapi
 uvicorn
+python-multipart

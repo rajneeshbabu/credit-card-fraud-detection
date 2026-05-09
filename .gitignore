@@ -39,3 +39,6 @@ Thumbs.db
 *.tmp
 *.bak
 PDF.js viewer.pdf
+
+# Removed files
+app.py

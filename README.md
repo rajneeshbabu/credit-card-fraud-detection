@@ -1,17 +1,17 @@
 # 💳 Credit Card Fraud Detection
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue?logo=python)](https://python.org)
-[![Jupyter](https://img.shields.io/badge/Jupyter-Notebook-orange?logo=jupyter)](https://jupyter.org)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.1%2B-EE4C2C?logo=pytorch)](https://pytorch.org)
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-1.x-f7931e?logo=scikitlearn)](https://scikit-learn.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-An end-to-end machine learning project for detecting fraudulent credit card transactions using ensemble models, SMOTE oversampling, threshold tuning, and SHAP explainability.
+An end-to-end machine learning project for detecting fraudulent credit card transactions. Combines a tuned ensemble model (LightGBM / XGBoost / Random Forest) with a PyTorch autoencoder for anomaly detection — with full SHAP explainability and support for Apple Silicon GPU (MPS).
 
 ---
 
 ## 📌 Problem Statement
 
-Credit card fraud is a critical challenge for financial institutions. This project builds a binary classifier to identify fraudulent transactions from a highly imbalanced dataset where only **0.17%** of transactions are fraudulent. Standard accuracy metrics are misleading here — the focus is on **Precision-Recall AUC** and **F1-Score**.
+Credit card fraud is a critical challenge for financial institutions. This project builds a binary classifier on a highly imbalanced dataset where only **0.17%** of transactions are fraudulent. Standard accuracy is meaningless here — the project focuses on **Precision-Recall AUC** and **F1-Score**.
 
 ---
 
@@ -23,48 +23,48 @@ Credit card fraud is a critical challenge for financial institutions. This proje
 - **Target:** `Class` — `0` = Legitimate, `1` = Fraud
 - **Imbalance:** Only 492 fraud cases (0.172%)
 
-> ⚠️ `creditcard.csv` is not included in this repo due to its size (~150 MB). Download it from Kaggle and place it in the project root.
+> ⚠️ `creditcard.csv` is not included in this repo (~150 MB). Download it from Kaggle and place it in the project root before running the notebook.
 
 ---
 
-## 🛠️ Project Structure
+## 🗂️ Project Structure
 
 ```
 credit-card-fraud-detection/
 │
-├── ccfd.ipynb              # Main Jupyter Notebook (full pipeline)
-├── creditcard.csv          # Dataset (download from Kaggle — not in repo)
-├── models/                 # Saved models (auto-created on run)
-│   ├── best_model.pkl
-│   ├── scaler.pkl
-│   └── model_info.json
+├── ccfd.ipynb          # Main notebook — full pipeline (run this)
+├── train.py            # Standalone training script (alternative to notebook)
+├── model_arch.py       # Shared PyTorch model class (used by train.py)
+├── requirements.txt    # Python dependencies
 ├── README.md
-├── requirements.txt
-└── .gitignore
+├── .gitignore
+│
+├── creditcard.csv      # Dataset — download from Kaggle, not in repo
+└── models/             # Auto-generated after running the notebook / train.py
+    ├── best_model.pkl      # Tuned best classifier (joblib)
+    ├── scaler.pkl          # Fitted StandardScaler
+    ├── autoencoder.pt      # PyTorch autoencoder weights
+    └── model_info.json     # Metadata: thresholds, metrics, feature names
 ```
 
 ---
 
-## 🔬 Methodology
+## 🔬 Pipeline (inside `ccfd.ipynb`)
 
-### 1. Exploratory Data Analysis
+### 1. Data Loading & EDA
 - Class distribution, transaction amount & time analysis
-- Correlation heatmap and top features correlated with fraud
+- Correlation heatmap — top features correlated with fraud
+- KDE plots for PCA features (V1–V10) by class
 
-### 2. Feature Engineering
-- Extracted `Hour` from the `Time` column to capture daily patterns
-- Dropped raw `Time` and `Amount` — replaced by scaled versions
+### 2. Feature Engineering & Preprocessing
+- Extract `Hour` from `Time` column (daily fraud patterns)
+- Drop raw `Time` and `Amount`
+- **Stratified 80/20 train/test split**
+- `StandardScaler` fit **only on training data** (no leakage)
+- **SMOTE** applied **only on training data** (no leakage)
 
-### 3. Train / Test Split
-- 80/20 stratified split preserving fraud ratio
-
-### 4. Feature Scaling
-- `StandardScaler` fit **only on training data** to prevent data leakage
-
-### 5. Class Imbalance — SMOTE
-- Applied SMOTE exclusively on the training set to generate synthetic fraud samples
-
-### 6. Models Trained
+### 3. Model Comparison
+Four candidates trained on the SMOTE-balanced training set and evaluated on the held-out test set:
 
 | Model | Type |
 |-------|------|
@@ -73,15 +73,38 @@ credit-card-fraud-detection/
 | XGBoost | Gradient boosting |
 | LightGBM | Fast gradient boosting |
 
-### 7. Evaluation & Threshold Tuning
-- Models compared by **PR-AUC** (best metric for imbalanced fraud data)
-- Decision threshold optimised for maximum F1-Score
+Best model selected by **PR-AUC on test set**.
 
-### 8. Explainability — SHAP
-- SHAP TreeExplainer used to visualise global and local feature importance
+### 4. Hyperparameter Tuning — RandomizedSearchCV
+- `RandomizedSearchCV` samples **40 random combinations** from a large param grid
+- Scoring metric: `average_precision` (PR-AUC)
+- Final model retrained on full SMOTE training set with best params
 
-### 9. Model Persistence
-- Best model and scaler saved via `joblib` for production inference
+### 5. Threshold Tuning & Evaluation
+- Decision threshold optimised on Precision-Recall curve for **maximum F1-Score**
+- Confusion matrix + full classification report
+
+### 6. SHAP Explainability
+- `TreeExplainer` global feature importance
+- Beeswarm plot — feature impact direction on fraud prediction
+
+### 7. PyTorch Autoencoder — Anomaly Detection
+- Encoder–Decoder trained **on legitimate transactions only**
+- Fraud = high reconstruction error (out-of-distribution)
+- Training on **Apple Silicon GPU (MPS)** / NVIDIA CUDA / CPU — auto-detected
+- Architecture: `input → 64 → 32 → 16 (bottleneck) → 32 → 64 → input`
+- Early stopping + `ReduceLROnPlateau` scheduler
+
+### 8. Ensemble
+- `ensemble_score = 0.6 × supervised_prob + 0.4 × ae_score_normalised`
+- Separate threshold tuning for the ensemble score
+
+### 9. Save Artefacts
+- `best_model.pkl`, `scaler.pkl`, `autoencoder.pt`, `model_info.json`
+
+### 10. Summary
+- Comparison table and bar chart across all models and ensemble
+- Key takeaways
 
 ---
 
@@ -89,100 +112,90 @@ credit-card-fraud-detection/
 
 | Model | ROC-AUC | PR-AUC | Notes |
 |-------|---------|--------|-------|
-| Logistic Regression | ~0.97 | ~0.72 | Fast, interpretable baseline |
-| Random Forest | ~0.98 | ~0.85 | Strong ensemble performance |
+| Logistic Regression | ~0.97 | ~0.72 | Fast interpretable baseline |
+| Random Forest | ~0.98 | ~0.85 | Strong ensemble |
 | XGBoost | ~0.98 | ~0.87 | Excellent imbalanced handling |
-| **LightGBM** | **~0.98** | **~0.88** | **Best overall — fastest training** |
+| **LightGBM (tuned)** | **~0.98** | **~0.88+** | **Best — after RandomizedSearchCV** |
+| Autoencoder (PyTorch) | — | ~0.40 | Anomaly detection only |
+| **Ensemble** | **~0.98** | **~0.88+** | **Supervised + Autoencoder** |
 
-> Results may vary slightly by environment. Run the notebook for exact numbers.
+> Run the notebook for exact numbers. Results depend on RandomizedSearchCV's random sampling.
 
 ---
 
 ## ⚙️ Setup & Installation
 
-### Prerequisites
-- Python 3.8+
-- Jupyter Notebook or JupyterLab
+### 1. Clone the repo
 
-### Install dependencies
+```bash
+git clone https://github.com/rajneeshbabu/credit-card-fraud-detection.git
+cd credit-card-fraud-detection
+```
+
+### 2. Install PyTorch (Mac GPU support)
+
+```bash
+pip install torch torchvision torchaudio
+```
+
+### 3. Install remaining dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Run the notebook
+### 4. Download the dataset
+
+Download `creditcard.csv` from [Kaggle](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) and place it in the project root.
+
+---
+
+## 🚀 Run the Notebook
 
 ```bash
 jupyter notebook ccfd.ipynb
 ```
 
----
+Run all cells top to bottom. The notebook will:
+1. Compare all four models and automatically pick the best by PR-AUC
+2. Run RandomizedSearchCV tuning on the winner
+3. Train the PyTorch autoencoder on your GPU (MPS / CUDA / CPU)
+4. Evaluate the ensemble and save all artefacts to `models/`
 
-## 📦 Requirements
+**Expected runtime:** ~10–20 minutes depending on hardware.
 
-```
-pandas
-numpy
-matplotlib
-seaborn
-scikit-learn
-imbalanced-learn
-xgboost
-lightgbm
-shap
-joblib
-```
-
-Install all at once:
+### Alternative — standalone training script
 
 ```bash
-pip install pandas numpy matplotlib seaborn scikit-learn imbalanced-learn xgboost lightgbm shap joblib
+python train.py
 ```
 
----
-
-## 🚀 Inference — Predict on New Data
-
-After running the notebook, load the saved model for predictions:
-
-```python
-import joblib, json
-import pandas as pd
-
-model  = joblib.load("models/best_model.pkl")
-scaler = joblib.load("models/scaler.pkl")
-
-with open("models/model_info.json") as f:
-    info = json.load(f)
-
-# Your new transactions (must include V1-V28 + Hour)
-X_new = pd.DataFrame([...], columns=info["features"])
-X_scaled = scaler.transform(X_new)
-probs = model.predict_proba(X_scaled)[:, 1]
-preds = (probs >= info["best_threshold"]).astype(int)
-```
+Produces the same `models/` artefacts without Jupyter.
 
 ---
 
 ## 🧠 Key Learnings
 
-- **Accuracy is a misleading metric** for highly imbalanced datasets — a model predicting "legit" every time achieves 99.83% accuracy but catches 0 frauds
-- **PR-AUC** is the correct metric to optimise for fraud detection
-- **SMOTE must only be applied on training data** — applying it before splitting leaks information
-- **Threshold tuning** recovers additional true positives at the cost of acceptable false positives
-- **SHAP** reveals that V14, V17, and V12 are the most predictive fraud indicators
+- **Accuracy is misleading** for imbalanced data — a model predicting "legit" every time achieves 99.83% accuracy but catches 0 frauds
+- **PR-AUC is the right metric** for fraud detection
+- **SMOTE must be applied only on training data** — applying before splitting leaks information
+- **StandardScaler must be fit only on training data** — same reason
+- **Threshold tuning** recovers true positives missed by the default 0.5 cut-off
+- **RandomizedSearchCV** is far more efficient than GridSearch for large parameter spaces
+- **Autoencoder anomaly detection** is complementary to supervised learning — it catches out-of-distribution fraud the classifier may miss
+- **SHAP** confirms that V14, V17, and V12 are the most predictive fraud indicators
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+This project is licensed under the MIT License.
 
 ---
 
 ## 🙋 Author
 
-**Rajneesh Babu**  
+**Rajneesh Babu**
 GitHub: [@rajneeshbabu](https://github.com/rajneeshbabu)
 
 ---
@@ -191,3 +204,4 @@ GitHub: [@rajneeshbabu](https://github.com/rajneeshbabu)
 
 - Dataset: [ULB Machine Learning Group](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) via Kaggle
 - SHAP: [slundberg/shap](https://github.com/slundberg/shap)
+- PyTorch: [pytorch.org](https://pytorch.org)
