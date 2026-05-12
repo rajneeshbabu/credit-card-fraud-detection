@@ -2,8 +2,8 @@
 creditcard.csv
 *.csv
 
-# ── Saved models ──
-models/
+# ── Saved models (tracked — actual output files, small enough for GitHub) ──
+# models/ is intentionally NOT ignored so artefacts are versioned
 
 # ── Jupyter ──
 .ipynb_checkpoints/
