@@ -5,7 +5,7 @@
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-1.x-f7931e?logo=scikitlearn)](https://scikit-learn.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-An end-to-end machine learning project for detecting fraudulent credit card transactions. Combines a tuned ensemble model (LightGBM / XGBoost / Random Forest) with a PyTorch autoencoder for anomaly detection — with full SHAP explainability and support for Apple Silicon GPU (MPS).
+An end-to-end machine learning project for detecting fraudulent credit card transactions. Combines a tuned **XGBoost** classifier with a **PyTorch autoencoder** for anomaly detection — with full SHAP explainability and GPU acceleration.
 
 ---
 
@@ -33,18 +33,16 @@ Credit card fraud is a critical challenge for financial institutions. This proje
 credit-card-fraud-detection/
 │
 ├── ccfd.ipynb          # Main notebook — full pipeline (run this)
-├── train.py            # Standalone training script (alternative to notebook)
-├── model_arch.py       # Shared PyTorch model class (used by train.py)
 ├── requirements.txt    # Python dependencies
 ├── README.md
 ├── .gitignore
 │
 ├── creditcard.csv      # Dataset — download from Kaggle, not in repo
-└── models/             # Auto-generated after running the notebook / train.py
-    ├── best_model.pkl      # Tuned best classifier (joblib)
-    ├── scaler.pkl          # Fitted StandardScaler
-    ├── autoencoder.pt      # PyTorch autoencoder weights
-    └── model_info.json     # Metadata: thresholds, metrics, feature names
+└── models/             # Auto-generated after running the notebook
+    ├── best_model.pkl      # Tuned XGBoost classifier (780 KB)
+    ├── scaler.pkl          # Fitted StandardScaler (1.7 KB)
+    ├── autoencoder.pt      # PyTorch autoencoder weights (49 KB)
+    └── model_info.json     # Thresholds, metrics, best params
 ```
 
 ---
@@ -52,74 +50,94 @@ credit-card-fraud-detection/
 ## 🔬 Pipeline (inside `ccfd.ipynb`)
 
 ### 1. Data Loading & EDA
-- Class distribution, transaction amount & time analysis
-- Correlation heatmap — top features correlated with fraud
+- 284,807 transactions, 0 null values
+- Class distribution: 99.83% legit, 0.17% fraud
+- Transaction amount & hour-of-day analysis by class
+- Pearson correlation heatmap — top features correlated with fraud
 - KDE plots for PCA features (V1–V10) by class
 
 ### 2. Feature Engineering & Preprocessing
-- Extract `Hour` from `Time` column (daily fraud patterns)
-- Drop raw `Time` and `Amount`
-- **Stratified 80/20 train/test split**
+- Extract `Hour` from `Time` column — captures daily fraud patterns
+- Drop raw `Time` and `Amount` (replaced by engineered/scaled version)
+- **Stratified 80/20 train/test split** — 227,845 train, 56,962 test
 - `StandardScaler` fit **only on training data** (no leakage)
-- **SMOTE** applied **only on training data** (no leakage)
+- **SMOTE** applied **only on training data**: 394 fraud → 227,451 fraud (balanced)
 
 ### 3. Model Comparison
-Four candidates trained on the SMOTE-balanced training set and evaluated on the held-out test set:
+All four candidates trained on the SMOTE-balanced set, evaluated on the held-out test set:
 
-| Model | Type |
-|-------|------|
-| Logistic Regression | Linear baseline |
-| Random Forest | Bagging ensemble |
-| XGBoost | Gradient boosting |
-| LightGBM | Fast gradient boosting |
+| Model | ROC-AUC | PR-AUC | F1 (0.5 thresh) |
+|-------|---------|--------|-----------------|
+| Logistic Regression | 0.9705 | 0.7173 | 0.1036 |
+| Random Forest | 0.9692 | 0.8543 | 0.8333 |
+| **XGBoost** ✦ | **0.9835** | **0.8658** | 0.8195 |
+| LightGBM | 0.9417 | 0.7253 | 0.8137 |
 
-Best model selected by **PR-AUC on test set**.
+**XGBoost** selected as best model by PR-AUC.
 
-### 4. Hyperparameter Tuning — RandomizedSearchCV
-- `RandomizedSearchCV` samples **40 random combinations** from a large param grid
-- Scoring metric: `average_precision` (PR-AUC)
-- Final model retrained on full SMOTE training set with best params
+### 4. Hyperparameter Tuning — Random Search (No Cross-Validation)
+- SMOTE training data split once: 80% fit set, 20% validation set
+- 40 random parameter combinations sampled and scored on the validation set
+- Best configuration found:
 
-### 5. Threshold Tuning & Evaluation
-- Decision threshold optimised on Precision-Recall curve for **maximum F1-Score**
-- Confusion matrix + full classification report
+```
+n_estimators    = 400
+max_depth       = 5
+learning_rate   = 0.2
+subsample       = 0.8
+colsample_bytree= 1.0
+scale_pos_weight= 5
+```
+
+- Final model retrained on the **full** SMOTE training set with these params
+
+### 5. Threshold Tuning & Final Evaluation
+- Default threshold (0.50) → F1 = **0.7905**
+- Optimal threshold (0.9837) → F1 = **0.8696**
+
+**Final classification report (tuned XGBoost, threshold=0.9837):**
+
+```
+              precision    recall  f1-score   support
+       Legit     1.0000    1.0000    0.9998     56,864
+       Fraud     0.9302    0.8163    0.8696         98
+    accuracy                         0.9996     56,962
+```
 
 ### 6. SHAP Explainability
-- `TreeExplainer` global feature importance
-- Beeswarm plot — feature impact direction on fraud prediction
+- `TreeExplainer` global feature importance bar chart
+- Beeswarm plot — feature impact direction on fraud predictions
 
 ### 7. PyTorch Autoencoder — Anomaly Detection
-- Encoder–Decoder trained **on legitimate transactions only**
-- Fraud = high reconstruction error (out-of-distribution)
-- Training on **Apple Silicon GPU (MPS)** / NVIDIA CUDA / CPU — auto-detected
-- Architecture: `input → 64 → 32 → 16 (bottleneck) → 32 → 64 → input`
-- Early stopping + `ReduceLROnPlateau` scheduler
+- Architecture: `29 → 64 → 32 → 16 → 32 → 64 → 29` (9,453 parameters)
+- Trained on **227,451 legitimate transactions only**
+- GPU accelerated (Tesla T4 / Apple MPS / CPU — auto-detected)
+- Early stopping + ReduceLROnPlateau scheduler
+- Legit mean reconstruction error: **0.082** | Fraud mean: **14.769**
+- Autoencoder PR-AUC: **0.6330** | F1: **0.7136**
 
 ### 8. Ensemble
-- `ensemble_score = 0.6 × supervised_prob + 0.4 × ae_score_normalised`
-- Separate threshold tuning for the ensemble score
+- `ensemble_score = 0.6 × XGBoost_prob + 0.4 × normalised_ae_error`
+- Ensemble PR-AUC: **0.8320** | F1: **0.8743**
 
 ### 9. Save Artefacts
-- `best_model.pkl`, `scaler.pkl`, `autoencoder.pt`, `model_info.json`
-
-### 10. Summary
-- Comparison table and bar chart across all models and ensemble
-- Key takeaways
+All saved to `models/`: `best_model.pkl`, `scaler.pkl`, `autoencoder.pt`, `model_info.json`
 
 ---
 
-## 📊 Results
+## 📊 Final Results
 
-| Model | ROC-AUC | PR-AUC | Notes |
-|-------|---------|--------|-------|
-| Logistic Regression | ~0.97 | ~0.72 | Fast interpretable baseline |
-| Random Forest | ~0.98 | ~0.85 | Strong ensemble |
-| XGBoost | ~0.98 | ~0.87 | Excellent imbalanced handling |
-| **LightGBM (tuned)** | **~0.98** | **~0.88+** | **Best — after RandomizedSearchCV** |
-| Autoencoder (PyTorch) | — | ~0.40 | Anomaly detection only |
-| **Ensemble** | **~0.98** | **~0.88+** | **Supervised + Autoencoder** |
+| Model | ROC-AUC | PR-AUC | F1 | Notes |
+|-------|---------|--------|----|-------|
+| Logistic Regression | 0.9705 | 0.7173 | 0.1036 | Baseline |
+| Random Forest | 0.9692 | 0.8543 | 0.8333 | — |
+| XGBoost (base) | 0.9835 | 0.8658 | 0.8195 | Best model |
+| **XGBoost (tuned)** | **0.9857** | **0.8614** | **0.8696** | **After threshold tuning** |
+| LightGBM | 0.9417 | 0.7253 | 0.8137 | — |
+| Autoencoder (PyTorch) | — | 0.6330 | 0.7136 | Anomaly detection only |
+| **Ensemble** | — | **0.8320** | **0.8743** | XGBoost + Autoencoder |
 
-> Run the notebook for exact numbers. Results depend on RandomizedSearchCV's random sampling.
+> Fraud detection precision: **93%** — Recall: **82%** — catching 80 out of 98 fraud cases in the test set.
 
 ---
 
@@ -132,7 +150,7 @@ git clone https://github.com/rajneeshbabu/credit-card-fraud-detection.git
 cd credit-card-fraud-detection
 ```
 
-### 2. Install PyTorch (Mac GPU support)
+### 2. Install PyTorch
 
 ```bash
 pip install torch torchvision torchaudio
@@ -156,46 +174,31 @@ Download `creditcard.csv` from [Kaggle](https://www.kaggle.com/datasets/mlg-ulb/
 jupyter notebook ccfd.ipynb
 ```
 
-Run all cells top to bottom. The notebook will:
-1. Compare all four models and automatically pick the best by PR-AUC
-2. Run RandomizedSearchCV tuning on the winner
-3. Train the PyTorch autoencoder on your GPU (MPS / CUDA / CPU)
-4. Evaluate the ensemble and save all artefacts to `models/`
-
-**Expected runtime:** ~10–20 minutes depending on hardware.
-
-### Alternative — standalone training script
-
-```bash
-python train.py
-```
-
-Produces the same `models/` artefacts without Jupyter.
+Run all cells top to bottom. Expected runtime: **~15–30 minutes** (depends on hardware). The notebook auto-detects GPU (CUDA / Apple MPS) and falls back to CPU.
 
 ---
 
 ## 🧠 Key Learnings
 
-- **Accuracy is misleading** for imbalanced data — a model predicting "legit" every time achieves 99.83% accuracy but catches 0 frauds
-- **PR-AUC is the right metric** for fraud detection
-- **SMOTE must be applied only on training data** — applying before splitting leaks information
-- **StandardScaler must be fit only on training data** — same reason
-- **Threshold tuning** recovers true positives missed by the default 0.5 cut-off
-- **RandomizedSearchCV** is far more efficient than GridSearch for large parameter spaces
-- **Autoencoder anomaly detection** is complementary to supervised learning — it catches out-of-distribution fraud the classifier may miss
-- **SHAP** confirms that V14, V17, and V12 are the most predictive fraud indicators
+- **Accuracy is misleading** — predicting "Legit" every time gives 99.83% accuracy but catches 0 frauds
+- **PR-AUC is the right metric** for fraud detection on imbalanced data
+- **SMOTE and Scaler must be fit on training data only** — prevents data leakage
+- **No cross-validation** — hyperparameter search uses a single held-out validation split (faster, no overfitting to folds)
+- **Threshold tuning matters** — moving from 0.5 to 0.9837 improved F1 from 0.79 to 0.87
+- **Autoencoder reconstruction gap** — fraud transactions have ~180× higher reconstruction error than legit ones (14.77 vs 0.08)
+- **SHAP** confirms V14, V17, V12 as the strongest fraud indicators
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License.
+MIT License
 
 ---
 
 ## 🙋 Author
 
-**Rajneesh Babu**
+**Rajneesh Babu**  
 GitHub: [@rajneeshbabu](https://github.com/rajneeshbabu)
 
 ---

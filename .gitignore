@@ -42,3 +42,5 @@ PDF.js viewer.pdf
 
 # Removed files
 app.py
+train.py
+model_arch.py
