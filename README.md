@@ -4,6 +4,9 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.1%2B-EE4C2C?logo=pytorch)](https://pytorch.org)
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-1.x-f7931e?logo=scikitlearn)](https://scikit-learn.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Project Page](https://img.shields.io/badge/Project%20Page-GitHub%20Pages-222?logo=github)](https://rajneeshbabu.github.io/credit-card-fraud-detection/)
+
+🌐 **[View Project Page →](https://rajneeshbabu.github.io/credit-card-fraud-detection/)**
 
 An end-to-end machine learning project for detecting fraudulent credit card transactions. Combines a tuned **XGBoost** classifier with a **PyTorch autoencoder** for anomaly detection — with full SHAP explainability and GPU acceleration.
 
